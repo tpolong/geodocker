@@ -1,0 +1,162 @@
+{
+ "cells": [
+  {
+   "cell_type": "code",
+   "execution_count": 1,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "#!curl -o /tmp/roads.geojson https://raw.githubusercontent.com/tpolong/geodocker/master/d.geojson "
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 2,
+   "metadata": {
+    "collapsed": true
+   },
+   "outputs": [],
+   "source": [
+    "import geopyspark as gps\n",
+    "import numpy as np\n",
+    "import fiona\n",
+    "import pyproj\n",
+    "from pyspark import SparkContext\n",
+    "from functools import partial\n",
+    "from shapely.geometry import Point, MultiPolygon, LineString, box,MultiLineString,shape,Point\n",
+    "from shapely.ops import transform\n",
+    "from geonotebook.wrappers import VectorData, TMSRasterData"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 3,
+   "metadata": {
+    "collapsed": true
+   },
+   "outputs": [],
+   "source": [
+    "conf = gps.geopyspark_conf(master=\"local[*]\", appName=\"map-algebra\")\n",
+    "pysc = SparkContext(conf=conf)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 4,
+   "metadata": {
+    "collapsed": true
+   },
+   "outputs": [],
+   "source": [
+    "with fiona.open(\"/tmp/roads.geojson\") as source:\n",
+    "    roads_crs = source.crs['init']\n",
+    "    roads = [Point(shape(line['geometry'])) for line in source]"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 5,
+   "metadata": {
+    "collapsed": true
+   },
+   "outputs": [],
+   "source": [
+    "def create_partial_reprojection_func(crs):\n",
+    "    return partial(pyproj.transform,\n",
+    "                   pyproj.Proj(init=crs),\n",
+    "                   pyproj.Proj(init='epsg:3857'))\n",
+    "reprojected_roads = [transform(create_partial_reprojection_func(roads_crs), road) for road in roads]"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 6,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "#raster_poly_1 = box(0.0, 0.0, 5.0, 10.0)\n",
+    "#raster_poly_2 = box(3.0, 6.0, 15.0, 20.0)\n",
+    "#raster_poly_3 = box(13.5, 17.0, 30.0, 20.0)\n",
+    "\n",
+    "#raster_multi_poly = MultiPolygon([raster_poly_1, raster_poly_2, raster_poly_3])\n",
+    "rasterize_options = gps.RasterizerOptions(includePartial=True, sampleType='PixelIsArea')\n",
+    "\n",
+    "road_raster = gps.rasterize(geoms=reprojected_roads,\n",
+    "                            crs=\"EPSG:3857\",\n",
+    "                            zoom=10,\n",
+    "                            fill_value=2,\n",
+    "                            cell_type=gps.CellType.INT16,\n",
+    "                            options=rasterize_options,\n",
+    "                            num_partitions=50)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 7,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "<promise.promise.Promise at 0x7f9bcdaf2be0>"
+      ]
+     },
+     "execution_count": 7,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "weighted_layer=road_raster \n",
+    "weight=weighted_layer.pyramid()\n",
+    "weighted_histogram = weight.get_histogram()\n",
+    "weighted_color_map = gps.ColorMap.build(breaks=weighted_histogram,\n",
+    "                                        colors='viridis')\n",
+    "tms = gps.TMS.build(source=weight,\n",
+    "                    display=weighted_color_map)\n",
+    "M.add_layer(TMSRasterData(tms), name=\"Weighted Layer\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 8,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "<promise.promise.Promise at 0x7f9bcdd2ce10>"
+      ]
+     },
+     "execution_count": 8,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "M.set_center(108, 19, 9)"
+   ]
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "GeoNotebook + GeoPySpark",
+   "language": "python",
+   "name": "geonotebook3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.4.5"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 2
+}
